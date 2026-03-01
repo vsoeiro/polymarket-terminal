@@ -3,35 +3,20 @@
  * Proxy support for Polymarket API calls only.
  *
  * - CLOB API: uses axios internally (via @polymarket/clob-client) →
- *   we set axios.defaults to use the proxy agent globally.
- * - Gamma / Data API: uses native fetch → we provide proxyFetch() wrapper.
+ *   we set axios.defaults.httpAgent/httpsAgent via https-proxy-agent.
+ * - Gamma / Data API: uses native fetch (undici) →
+ *   we use undici.ProxyAgent with the `dispatcher` option.
  * - Polygon RPC: NOT proxied (separate ethers.js provider).
  *
- * Set PROXY_URL in .env to enable. Supports HTTP/HTTPS/SOCKS5 proxies.
+ * Set PROXY_URL in .env to enable. Supports HTTP/HTTPS proxies.
  * Example: PROXY_URL=http://user:pass@proxy.example.com:8080
  */
 
 import config from '../config/index.js';
 import logger from './logger.js';
 
-let proxyAgent = null;
-
-/**
- * Initialize the proxy agent from config.proxyUrl.
- * Returns the agent or null if no proxy is configured.
- */
-async function createAgent() {
-    if (!config.proxyUrl) return null;
-
-    try {
-        const { HttpsProxyAgent } = await import('https-proxy-agent');
-        return new HttpsProxyAgent(config.proxyUrl);
-    } catch (err) {
-        logger.error(`Failed to create proxy agent: ${err.message}`);
-        logger.error('Make sure https-proxy-agent is installed: npm i https-proxy-agent');
-        return null;
-    }
-}
+let axiosAgent = null;   // https-proxy-agent for axios (CLOB client)
+let fetchDispatcher = null; // undici ProxyAgent for native fetch
 
 /**
  * Set up axios defaults so that the @polymarket/clob-client's
@@ -44,43 +29,41 @@ export async function setupAxiosProxy() {
         return;
     }
 
-    proxyAgent = await createAgent();
-    if (!proxyAgent) return;
-
     try {
+        // 1. Setup axios proxy (for CLOB client)
+        const { HttpsProxyAgent } = await import('https-proxy-agent');
+        axiosAgent = new HttpsProxyAgent(config.proxyUrl);
+
         const axiosModule = await import('axios');
         const axios = axiosModule.default || axiosModule;
-
-        // Disable axios built-in proxy (env vars) and use our agent instead
         axios.defaults.proxy = false;
-        axios.defaults.httpAgent = proxyAgent;
-        axios.defaults.httpsAgent = proxyAgent;
-
+        axios.defaults.httpAgent = axiosAgent;
+        axios.defaults.httpsAgent = axiosAgent;
         logger.info(`Axios proxy configured → ${maskProxyUrl(config.proxyUrl)}`);
     } catch (err) {
         logger.error(`Failed to configure axios proxy: ${err.message}`);
+        logger.error('Make sure https-proxy-agent is installed: npm i https-proxy-agent');
+    }
+
+    try {
+        // 2. Setup undici ProxyAgent (for native fetch)
+        const undici = await import('undici');
+        fetchDispatcher = new undici.ProxyAgent(config.proxyUrl);
+        logger.info(`Fetch proxy configured → ${maskProxyUrl(config.proxyUrl)}`);
+    } catch (err) {
+        logger.error(`Failed to configure fetch proxy: ${err.message}`);
     }
 }
 
 /**
- * Get the proxy agent for use with native fetch().
- */
-export function getProxyAgent() {
-    return proxyAgent;
-}
-
-/**
  * Proxy-aware fetch wrapper.
- * Drop-in replacement for global fetch() — injects the proxy agent
- * when PROXY_URL is configured.
+ * Drop-in replacement for global fetch() — uses undici ProxyAgent
+ * as dispatcher when PROXY_URL is configured.
  * Use this for Gamma API and Data API calls.
  */
 export async function proxyFetch(url, opts = {}) {
-    if (proxyAgent) {
-        // Node 18+ fetch supports the 'dispatcher' option for undici,
-        // but the standard approach for http/https agent is via the agent option.
-        // We use the node-fetch compatible approach via the agent option.
-        opts.agent = proxyAgent;
+    if (fetchDispatcher) {
+        opts.dispatcher = fetchDispatcher;
     }
     return fetch(url, opts);
 }
@@ -95,17 +78,13 @@ export async function testProxy() {
     logger.info(`Testing proxy connection → ${maskProxyUrl(config.proxyUrl)} ...`);
 
     try {
-        // Ensure agent is created
-        if (!proxyAgent) {
-            proxyAgent = await createAgent();
-        }
-        if (!proxyAgent) {
-            throw new Error('Proxy agent creation failed');
+        if (!fetchDispatcher) {
+            throw new Error('Proxy dispatcher not initialized');
         }
 
-        // Test with a simple GET to the CLOB time endpoint
+        // Test with a simple GET to the CLOB time endpoint via proxied fetch
         const resp = await fetch(`${config.clobHost}/time`, {
-            agent: proxyAgent,
+            dispatcher: fetchDispatcher,
             signal: AbortSignal.timeout(15000),
         });
 

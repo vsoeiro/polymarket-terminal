@@ -82,8 +82,23 @@ const config = {
   sniperPrice: parseFloat(process.env.SNIPER_PRICE || '0.01'), // $ per share
   sniperShares: parseFloat(process.env.SNIPER_SHARES || '5'),    // shares per side
 
+  // ── Sniper Schedule (UTC+8) ────────────────────────────────────
+  // Per-asset session windows. Format: SNIPER_SCHEDULE_{ASSET}=HH:MM-HH:MM,HH:MM-HH:MM
+  // Assets without a schedule are always active.
+  sniperSchedule: (() => {
+    const schedule = {};
+    const prefix = 'SNIPER_SCHEDULE_';
+    for (const [key, value] of Object.entries(process.env)) {
+      if (key.startsWith(prefix) && value) {
+        const asset = key.slice(prefix.length).toLowerCase();
+        schedule[asset] = value;
+      }
+    }
+    return schedule;
+  })(),
+
   // ── Proxy (Polymarket API only, NOT Polygon RPC) ──────────────
-  // Supports HTTP/HTTPS/SOCKS5. Example: http://user:pass@host:port
+  // Supports HTTP/HTTPS. Example: http://user:pass@host:port
   proxyUrl: process.env.PROXY_URL || '',
 };
 

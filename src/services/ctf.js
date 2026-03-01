@@ -560,13 +560,19 @@ export async function redeemSniperPositions() {
     let dataPositions = [];
     try {
         const resp = await proxyFetch(`${config.dataHost}/positions?user=${config.proxyWallet}`);
-        if (resp.ok) dataPositions = await resp.json();
+        if (!resp.ok) {
+            logger.warn(`SNIPER redeemer: Data API returned ${resp.status} — will retry`);
+            return;
+        }
+        dataPositions = await resp.json();
         if (!Array.isArray(dataPositions)) dataPositions = [];
-    } catch {
-        return; // silent — will retry next interval
+    } catch (err) {
+        logger.warn(`SNIPER redeemer: Data API fetch failed — ${err.message}`);
+        return;
     }
 
     if (dataPositions.length === 0) return;
+    logger.info(`SNIPER redeemer: checking ${dataPositions.length} position(s)...`);
 
     const provider = await getPolygonProvider();
     const ctf = new ethers.Contract(CTF_ADDRESS, CTF_ABI, provider);
