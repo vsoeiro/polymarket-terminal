@@ -2,6 +2,7 @@ import { ClobClient } from '@polymarket/clob-client';
 import { Wallet } from 'ethers';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
+import { setupAxiosProxy, testProxy } from '../utils/proxy.js';
 
 let clobClient = null;
 let signer = null;
@@ -11,6 +12,16 @@ let signer = null;
  * Auto-derives API credentials if not provided in .env
  */
 export async function initClient() {
+    // ── Set up proxy (if configured) BEFORE any Polymarket API calls ──
+    await setupAxiosProxy();
+
+    // Test proxy connectivity
+    const proxyOk = await testProxy();
+    if (!proxyOk) {
+        logger.error('Proxy test failed — cannot reach Polymarket. Exiting.');
+        process.exit(1);
+    }
+
     logger.info('Initializing Polymarket CLOB client...');
 
     signer = new Wallet(config.privateKey);

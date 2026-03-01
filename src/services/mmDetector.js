@@ -12,13 +12,14 @@
 
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
+import { proxyFetch } from '../utils/proxy.js';
 
 // Slot size in seconds (300 for 5m, 900 for 15m)
 const SLOT_SEC = config.mmDuration === '15m' ? 900 : 300;
 
-let pollTimer   = null;
-let onMarketCb  = null;
-const seenKeys  = new Set(); // `${asset}-${slotTimestamp}` already scheduled
+let pollTimer = null;
+let onMarketCb = null;
+const seenKeys = new Set(); // `${asset}-${slotTimestamp}` already scheduled
 
 // ── Slot helpers ──────────────────────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ function nextSlot() {
 async function fetchBySlug(asset, slotTimestamp) {
     const slug = `${asset}-updown-${config.mmDuration}-${slotTimestamp}`;
     try {
-        const resp = await fetch(`${config.gammaHost}/markets/slug/${slug}`);
+        const resp = await proxyFetch(`${config.gammaHost}/markets/slug/${slug}`);
         if (!resp.ok) return null;
         const data = await resp.json();
         return data?.conditionId ? data : null;
@@ -61,7 +62,7 @@ function extractMarketData(market, asset) {
         [yesTokenId, noTokenId] = tokenIds;
     } else if (Array.isArray(market.tokens) && market.tokens.length >= 2) {
         yesTokenId = market.tokens[0]?.token_id ?? market.tokens[0]?.tokenId;
-        noTokenId  = market.tokens[1]?.token_id ?? market.tokens[1]?.tokenId;
+        noTokenId = market.tokens[1]?.token_id ?? market.tokens[1]?.tokenId;
     }
 
     if (!yesTokenId || !noTokenId) return null;
@@ -69,13 +70,13 @@ function extractMarketData(market, asset) {
     return {
         asset,
         conditionId,
-        question:       market.question || market.title || '',
-        endTime:        market.endDate  || market.end_date_iso || market.endDateIso,
+        question: market.question || market.title || '',
+        endTime: market.endDate || market.end_date_iso || market.endDateIso,
         eventStartTime: market.eventStartTime || market.event_start_time,
-        yesTokenId:     String(yesTokenId),
-        noTokenId:      String(noTokenId),
-        negRisk:        market.negRisk  ?? market.neg_risk  ?? false,
-        tickSize:       String(market.orderPriceMinTickSize ?? market.minimum_tick_size ?? market.minimumTickSize ?? '0.01'),
+        yesTokenId: String(yesTokenId),
+        noTokenId: String(noTokenId),
+        negRisk: market.negRisk ?? market.neg_risk ?? false,
+        tickSize: String(market.orderPriceMinTickSize ?? market.minimum_tick_size ?? market.minimumTickSize ?? '0.01'),
     };
 }
 
@@ -98,7 +99,7 @@ async function scheduleAsset(asset, slotTimestamp) {
     seenKeys.add(key);
 
     // Refuse to enter a market already well into its window (e.g., bot restart mid-slot)
-    const openAt     = data.eventStartTime ? new Date(data.eventStartTime).getTime() : slotTimestamp * 1000;
+    const openAt = data.eventStartTime ? new Date(data.eventStartTime).getTime() : slotTimestamp * 1000;
     const elapsedSec = Math.round((Date.now() - openAt) / 1000);
     if (elapsedSec > 15) {
         logger.info(`MM: ${asset.toUpperCase()} next slot already ${elapsedSec}s old — skipping, will catch next`);

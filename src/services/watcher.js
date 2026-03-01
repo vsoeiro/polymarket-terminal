@@ -1,6 +1,7 @@
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import { readState, writeState } from '../utils/state.js';
+import { proxyFetch } from '../utils/proxy.js';
 
 const PROCESSED_FILE = 'processed_trades.json';
 
@@ -11,7 +12,7 @@ const PROCESSED_FILE = 'processed_trades.json';
 async function fetchTraderActivity() {
     const url = `${config.dataHost}/activity?user=${config.traderAddress}`;
     try {
-        const response = await fetch(url);
+        const response = await proxyFetch(url);
         if (!response.ok) {
             throw new Error(`Data API returned ${response.status}`);
         }
@@ -116,7 +117,7 @@ export { markTradeProcessed };
 export async function fetchMarketInfo(conditionId) {
     try {
         const url = `${config.gammaHost}/markets?condition_id=${conditionId}`;
-        const response = await fetch(url);
+        const response = await proxyFetch(url);
         if (!response.ok) return null;
         const markets = await response.json();
         return markets && markets.length > 0 ? markets[0] : null;
@@ -132,7 +133,7 @@ export async function fetchMarketInfo(conditionId) {
 export async function fetchMarketByTokenId(tokenId) {
     try {
         const url = `${config.gammaHost}/markets?clob_token_ids=${tokenId}`;
-        const response = await fetch(url);
+        const response = await proxyFetch(url);
         if (!response.ok) return null;
         const markets = await response.json();
         return markets && markets.length > 0 ? markets[0] : null;

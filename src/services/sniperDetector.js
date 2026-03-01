@@ -14,10 +14,12 @@
 
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
+import { isAssetInSession, getNextSessionInfo } from './schedule.js';
+import { proxyFetch } from '../utils/proxy.js';
 
 const SLOT_SEC = 5 * 60; // 300 seconds
 
-let pollTimer  = null;
+let pollTimer = null;
 let onMarketCb = null;
 const seenKeys = new Set(); // `${asset}-${slotTimestamp}` already handled
 
@@ -36,7 +38,7 @@ function nextSlot() {
 async function fetchBySlug(asset, slotTimestamp) {
     const slug = `${asset}-updown-5m-${slotTimestamp}`;
     try {
-        const resp = await fetch(`${config.gammaHost}/markets/slug/${slug}`);
+        const resp = await proxyFetch(`${config.gammaHost}/markets/slug/${slug}`);
         if (!resp.ok) return null;
         const data = await resp.json();
         return data?.conditionId ? data : null;
@@ -61,7 +63,7 @@ function extractMarketData(market, asset) {
         [yesTokenId, noTokenId] = tokenIds;
     } else if (Array.isArray(market.tokens) && market.tokens.length >= 2) {
         yesTokenId = market.tokens[0]?.token_id ?? market.tokens[0]?.tokenId;
-        noTokenId  = market.tokens[1]?.token_id ?? market.tokens[1]?.tokenId;
+        noTokenId = market.tokens[1]?.token_id ?? market.tokens[1]?.tokenId;
     }
 
     if (!yesTokenId || !noTokenId) return null;
@@ -69,13 +71,13 @@ function extractMarketData(market, asset) {
     return {
         asset,
         conditionId,
-        question:       market.question || market.title || '',
-        endTime:        market.endDate  || market.end_date_iso || market.endDateIso,
+        question: market.question || market.title || '',
+        endTime: market.endDate || market.end_date_iso || market.endDateIso,
         eventStartTime: market.eventStartTime || market.event_start_time,
-        yesTokenId:     String(yesTokenId),
-        noTokenId:      String(noTokenId),
-        negRisk:        market.negRisk  ?? market.neg_risk  ?? false,
-        tickSize:       String(market.orderPriceMinTickSize ?? market.minimum_tick_size ?? '0.01'),
+        yesTokenId: String(yesTokenId),
+        noTokenId: String(noTokenId),
+        negRisk: market.negRisk ?? market.neg_risk ?? false,
+        tickSize: String(market.orderPriceMinTickSize ?? market.minimum_tick_size ?? '0.01'),
     };
 }
 
@@ -99,8 +101,8 @@ async function scheduleAsset(asset, slotTimestamp, isCurrent = false) {
 
     if (isCurrent) {
         // Current slot: only place orders if there's at least 30 seconds of market left
-        const endAt      = data.endTime ? new Date(data.endTime).getTime() : (slotTimestamp + SLOT_SEC) * 1000;
-        const secsLeft   = Math.round((endAt - Date.now()) / 1000);
+        const endAt = data.endTime ? new Date(data.endTime).getTime() : (slotTimestamp + SLOT_SEC) * 1000;
+        const secsLeft = Math.round((endAt - Date.now()) / 1000);
         if (secsLeft < 30) {
             logger.info(`SNIPER: ${asset.toUpperCase()} current market closing soon (${secsLeft}s) — skipping`);
             return;
@@ -108,7 +110,7 @@ async function scheduleAsset(asset, slotTimestamp, isCurrent = false) {
         logger.success(`SNIPER: ${asset.toUpperCase()} current market active (${secsLeft}s left) — placing orders now`);
     } else {
         // Next slot: market hasn't opened yet
-        const openAt        = data.eventStartTime ? new Date(data.eventStartTime).getTime() : slotTimestamp * 1000;
+        const openAt = data.eventStartTime ? new Date(data.eventStartTime).getTime() : slotTimestamp * 1000;
         const secsUntilOpen = Math.round((openAt - Date.now()) / 1000);
         logger.success(`SNIPER: ${asset.toUpperCase()} found "${data.question.slice(0, 40)}"${secsUntilOpen > 0 ? ` — ${secsUntilOpen}s before open` : ''}`);
     }
@@ -122,8 +124,25 @@ async function poll() {
     try {
         const curr = currentSlot();
         const next = nextSlot();
+
+        // Filter assets by trading session schedule
+        const activeAssets = config.sniperAssets.filter((asset) => {
+            if (!isAssetInSession(asset)) {
+                const nextInfo = getNextSessionInfo(asset);
+                const key = `skip-${asset}-${Math.floor(Date.now() / 60000)}`; // log once per minute
+                if (!seenKeys.has(key)) {
+                    seenKeys.add(key);
+                    logger.info(`SNIPER: ${asset.toUpperCase()} outside session window${nextInfo ? ` — next in ${nextInfo}` : ''}`);
+                }
+                return false;
+            }
+            return true;
+        });
+
+        if (activeAssets.length === 0) return;
+
         // Check current active market AND the upcoming next one, in parallel for each asset
-        await Promise.all(config.sniperAssets.flatMap((asset) => [
+        await Promise.all(activeAssets.flatMap((asset) => [
             scheduleAsset(asset, curr, true),  // current market (if still has time left)
             scheduleAsset(asset, next, false), // next upcoming market
         ]));

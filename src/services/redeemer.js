@@ -5,6 +5,7 @@ import { execSafeCall, CTF_ADDRESS, USDC_ADDRESS } from './ctf.js';
 import { getOpenPositions, removePosition } from './position.js';
 import { recordSimResult } from '../utils/simStats.js';
 import logger from '../utils/logger.js';
+import { proxyFetch } from '../utils/proxy.js';
 
 // CTF ABI (minimal — read-only calls only; writes go through execSafeCall)
 const CTF_ABI = [
@@ -20,7 +21,7 @@ const CTF_ABI = [
 async function checkMarketResolution(conditionId) {
     try {
         const url = `${config.gammaHost}/markets?condition_id=${conditionId}`;
-        const response = await fetch(url);
+        const response = await proxyFetch(url);
         if (!response.ok) return null;
 
         const markets = await response.json();

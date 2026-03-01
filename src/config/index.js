@@ -54,33 +54,37 @@ const config = {
   gtcFallbackTimeout: parseInt(process.env.GTC_FALLBACK_TIMEOUT || '60', 10),
 
   // ── Market Maker ──────────────────────────────────────────────
-  mmAssets:        (process.env.MM_ASSETS || 'btc')
-                     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
-  mmDuration:      process.env.MM_DURATION || '5m',  // '5m' or '15m'
-  mmTradeSize:     parseFloat(process.env.MM_TRADE_SIZE     || '5'),    // USDC per side
-  mmSellPrice:     parseFloat(process.env.MM_SELL_PRICE     || '0.60'), // limit sell target
-  mmCutLossTime:   parseInt(  process.env.MM_CUT_LOSS_TIME  || '60', 10), // seconds before close
-  mmMarketKeyword: process.env.MM_MARKET_KEYWORD            || 'Bitcoin Up or Down',
-  mmEntryWindow:   parseInt(  process.env.MM_ENTRY_WINDOW   || '45', 10), // max secs after open
-  mmPollInterval:  parseInt(  process.env.MM_POLL_INTERVAL  || '10', 10) * 1000,
-  mmAdaptiveCL:            process.env.MM_ADAPTIVE_CL !== 'false',           // true = adaptive, false = legacy immediate market-sell
-  mmAdaptiveMinCombined:   parseFloat(process.env.MM_ADAPTIVE_MIN_COMBINED || '1.20'), // min combined sell (both legs) to qualify for limit
-  mmAdaptiveMonitorSec:    parseInt(process.env.MM_ADAPTIVE_MONITOR_SEC || '5', 10),
+  mmAssets: (process.env.MM_ASSETS || 'btc')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+  mmDuration: process.env.MM_DURATION || '5m',  // '5m' or '15m'
+  mmTradeSize: parseFloat(process.env.MM_TRADE_SIZE || '5'),    // USDC per side
+  mmSellPrice: parseFloat(process.env.MM_SELL_PRICE || '0.60'), // limit sell target
+  mmCutLossTime: parseInt(process.env.MM_CUT_LOSS_TIME || '60', 10), // seconds before close
+  mmMarketKeyword: process.env.MM_MARKET_KEYWORD || 'Bitcoin Up or Down',
+  mmEntryWindow: parseInt(process.env.MM_ENTRY_WINDOW || '45', 10), // max secs after open
+  mmPollInterval: parseInt(process.env.MM_POLL_INTERVAL || '10', 10) * 1000,
+  mmAdaptiveCL: process.env.MM_ADAPTIVE_CL !== 'false',           // true = adaptive, false = legacy immediate market-sell
+  mmAdaptiveMinCombined: parseFloat(process.env.MM_ADAPTIVE_MIN_COMBINED || '1.20'), // min combined sell (both legs) to qualify for limit
+  mmAdaptiveMonitorSec: parseInt(process.env.MM_ADAPTIVE_MONITOR_SEC || '5', 10),
 
   // ── Recovery Buy (after cut-loss) ─────────────────────────────
   // When enabled: after cutting loss, monitor prices for 10s and
   // market-buy the dominant side if it's above threshold and rising/stable.
-  mmRecoveryBuy:       process.env.MM_RECOVERY_BUY         === 'true',
+  mmRecoveryBuy: process.env.MM_RECOVERY_BUY === 'true',
   mmRecoveryThreshold: parseFloat(process.env.MM_RECOVERY_THRESHOLD || '0.70'), // min price to qualify
-  mmRecoverySize:      parseFloat(process.env.MM_RECOVERY_SIZE      || '0'),    // 0 = use mmTradeSize
+  mmRecoverySize: parseFloat(process.env.MM_RECOVERY_SIZE || '0'),    // 0 = use mmTradeSize
 
   // ── Orderbook Sniper ───────────────────────────────────────────
   // Places tiny GTC limit BUY orders at a very low price on each side
   // of ETH/SOL/XRP 5-minute markets — catches panic dumps near $0.
   sniperAssets: (process.env.SNIPER_ASSETS || 'eth,sol,xrp')
-                  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
-  sniperPrice:  parseFloat(process.env.SNIPER_PRICE  || '0.01'), // $ per share
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+  sniperPrice: parseFloat(process.env.SNIPER_PRICE || '0.01'), // $ per share
   sniperShares: parseFloat(process.env.SNIPER_SHARES || '5'),    // shares per side
+
+  // ── Proxy (Polymarket API only, NOT Polygon RPC) ──────────────
+  // Supports HTTP/HTTPS/SOCKS5. Example: http://user:pass@host:port
+  proxyUrl: process.env.PROXY_URL || '',
 };
 
 // Validation for copy-trade bot

@@ -1,20 +1,20 @@
 /**
- * sniper.js
- * Console-only entry point for the Orderbook Sniper bot.
+ * sniper-tui.js
+ * TUI version of the Orderbook Sniper bot (blessed dashboard).
  * Places tiny GTC BUY orders at a low price on both sides of 5-min markets.
  *
- * Run with: npm run sniper       (live, console)
- *           npm run sniper-sim   (simulation, console)
- *
- * For the TUI dashboard version, use: npm run sniper-tui
+ * Run with: npm run sniper-tui       (live)
+ *           npm run sniper-tui-sim   (simulation)
  */
 
 import { validateMMConfig } from './config/index.js';
 import config from './config/index.js';
 import logger from './utils/logger.js';
 import { initClient } from './services/client.js';
+import { getUsdcBalance } from './services/client.js';
+import { initDashboard, appendLog, updateStatus, isDashboardActive } from './ui/dashboard.js';
 import { startSniperDetector, stopSniperDetector } from './services/sniperDetector.js';
-import { executeSnipe } from './services/sniperExecutor.js';
+import { executeSnipe, getActiveSnipes } from './services/sniperExecutor.js';
 import { redeemSniperPositions } from './services/ctf.js';
 import { getSchedule, isAssetInSession, getNextSessionInfo } from './services/schedule.js';
 
@@ -32,6 +32,11 @@ if (config.sniperAssets.length === 0) {
     process.exit(1);
 }
 
+// ── Init TUI ──────────────────────────────────────────────────────────────────
+
+initDashboard();
+logger.setOutput(appendLog);
+
 // ── Init CLOB client ──────────────────────────────────────────────────────────
 
 try {
@@ -41,32 +46,83 @@ try {
     process.exit(1);
 }
 
-// ── Log session schedule ──────────────────────────────────────────────────────
+// ── Status panel ──────────────────────────────────────────────────────────────
 
-function logSchedule() {
+async function buildStatusContent() {
+    const lines = [];
+
+    // Balance
+    let balance = '?';
+    if (!config.dryRun) {
+        try { balance = (await getUsdcBalance()).toFixed(2); } catch { /* ignore */ }
+    } else {
+        balance = '{yellow-fg}SIM{/yellow-fg}';
+    }
+    lines.push('{bold}BALANCE{/bold}');
+    lines.push(`  USDC.e: {green-fg}$${balance}{/green-fg}`);
+    lines.push('');
+
+    lines.push('{bold}MODE{/bold}');
+    lines.push(`  ${config.dryRun ? '{yellow-fg}SIMULATION{/yellow-fg}' : '{green-fg}LIVE{/green-fg}'}`);
+    lines.push('');
+
+    lines.push('{bold}SNIPER CONFIG{/bold}');
+    lines.push(`  Assets : ${config.sniperAssets.join(', ').toUpperCase()}`);
+    lines.push(`  Price  : $${config.sniperPrice} per share`);
+    lines.push(`  Shares : ${config.sniperShares} per side`);
+    lines.push(`  Cost   : $${(config.sniperPrice * config.sniperShares * 2 * config.sniperAssets.length).toFixed(3)} per slot`);
+    lines.push('');
+
+    // Session schedule
+    lines.push('{bold}SESSION SCHEDULE (UTC+8){/bold}');
     const schedule = getSchedule();
-    logger.info('─── Session Schedule (UTC+8) ───');
     for (const asset of config.sniperAssets) {
         const sessions = schedule[asset];
         const active = isAssetInSession(asset);
-        const status = active ? '● ACTIVE' : '○ IDLE';
+        const statusTag = active
+            ? '{green-fg}● ACTIVE{/green-fg}'
+            : '{red-fg}○ IDLE{/red-fg}';
         if (sessions) {
             const sessionStr = sessions.map(s => `${s.startUtc8}–${s.endUtc8}`).join(', ');
-            logger.info(`  ${asset.toUpperCase()} [${status}]  ${sessionStr}`);
+            lines.push(`  ${asset.toUpperCase()} ${statusTag}  ${sessionStr}`);
             if (!active) {
                 const next = getNextSessionInfo(asset);
-                if (next) logger.info(`    → Next in ${next}`);
+                if (next) lines.push(`    {gray-fg}Next in ${next}{/gray-fg}`);
             }
         } else {
-            logger.info(`  ${asset.toUpperCase()} [NO SCHEDULE] (always active)`);
+            lines.push(`  ${asset.toUpperCase()} {yellow-fg}NO SCHEDULE{/yellow-fg} (always active)`);
         }
     }
-    logger.info('────────────────────────────────');
+    lines.push('');
+
+    // Recent snipe orders
+    const snipes = getActiveSnipes();
+    lines.push(`{bold}SNIPE ORDERS (${snipes.length} total){/bold}`);
+
+    if (snipes.length === 0) {
+        lines.push('  {gray-fg}Waiting for next slot...{/gray-fg}');
+    } else {
+        // Show last 10 orders (most recent first)
+        const recent = snipes.slice(-10).reverse();
+        for (const s of recent) {
+            const payout = s.potentialPayout.toFixed(2);
+            lines.push(`  {cyan-fg}${s.asset}{/cyan-fg} ${s.side} @ $${s.price} × ${s.shares}sh | pay $${payout} if win`);
+        }
+    }
+
+    return '\n' + lines.join('\n');
 }
 
-// ── Redeemer ──────────────────────────────────────────────────────────────────
-
+let refreshTimer = null;
 let redeemTimer = null;
+
+function startRefresh() {
+    refreshTimer = setInterval(async () => {
+        if (!isDashboardActive()) return;
+        updateStatus(await buildStatusContent());
+    }, 3000);
+    buildStatusContent().then(updateStatus);
+}
 
 function startRedeemer() {
     redeemSniperPositions().catch((err) => logger.error('Sniper redeemer error:', err.message));
@@ -90,6 +146,7 @@ async function handleNewMarket(market) {
 function shutdown() {
     logger.warn('SNIPER: shutting down...');
     stopSniperDetector();
+    if (refreshTimer) clearInterval(refreshTimer);
     if (redeemTimer) clearInterval(redeemTimer);
     process.exit(0);
 }
@@ -103,6 +160,6 @@ const costPerSlot = (config.sniperPrice * config.sniperShares * 2 * config.snipe
 logger.info(`SNIPER starting — ${config.dryRun ? 'SIMULATION' : 'LIVE'}`);
 logger.info(`Assets: ${config.sniperAssets.join(', ').toUpperCase()} | $${config.sniperPrice} × ${config.sniperShares}sh = $${costPerSlot}/slot`);
 
-logSchedule();
+startRefresh();
 startRedeemer();
 startSniperDetector(handleNewMarket);

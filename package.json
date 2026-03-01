@@ -18,7 +18,10 @@
     "mm-bot-dev": "DRY_RUN=true nodemon --ignore 'data/*.json' src/mm-bot.js",
     "sniper": "DRY_RUN=false node src/sniper.js",
     "sniper-sim": "DRY_RUN=true node src/sniper.js",
-    "sniper-dev": "DRY_RUN=true nodemon --ignore 'data/*.json' src/sniper.js"
+    "sniper-dev": "DRY_RUN=true nodemon --ignore 'data/*.json' src/sniper.js",
+    "sniper-tui": "DRY_RUN=false node src/sniper-tui.js",
+    "sniper-tui-sim": "DRY_RUN=true node src/sniper-tui.js",
+    "sniper-tui-dev": "DRY_RUN=true nodemon --ignore 'data/*.json' src/sniper-tui.js"
   },
   "keywords": [
     "polymarket",
@@ -32,6 +35,7 @@
     "blessed": "^0.1.81",
     "dotenv": "^16.4.7",
     "ethers": "^5.8.0",
+    "https-proxy-agent": "^7.0.6",
     "ws": "^8.19.0"
   },
   "devDependencies": {
