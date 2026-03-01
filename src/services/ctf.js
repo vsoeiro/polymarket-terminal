@@ -538,8 +538,9 @@ export async function redeemMMPositions() {
 
 // ── Sniper-specific redeemer ──────────────────────────────────────────────────
 
-// Track conditionIds that repeatedly fail to avoid retrying every cycle
+// Track conditionIds that repeatedly fail or are losses to avoid retrying every cycle
 const _failedConditions = new Set();
+const _skippedLosses = new Set();
 
 /**
  * Redeem sniper positions via Gnosis Safe.
@@ -582,15 +583,25 @@ export async function redeemSniperPositions() {
     }
 
     let redeemed = 0;
+    let skippedUnresolved = 0;
+    let skippedLosses = 0;
+    let skippedNoBalance = 0;
 
     for (const [conditionId, tokens] of byCondition) {
-        // Skip conditionIds that previously failed on-chain
+        // Fast skip: conditionIds that previously failed on-chain or confirmed losses
         if (_failedConditions.has(conditionId)) continue;
+        if (_skippedLosses.has(conditionId)) {
+            skippedLosses++;
+            continue;
+        }
 
         try {
-            // Skip unresolved markets
+            // Skip unresolved markets (fast check)
             const denominator = await ctf.payoutDenominator(conditionId);
-            if (denominator.isZero()) continue;
+            if (denominator.isZero()) {
+                skippedUnresolved++;
+                continue;
+            }
 
             // Check actual on-chain token balances (positions API can lag)
             const balances = await Promise.all(
@@ -600,7 +611,10 @@ export async function redeemSniperPositions() {
                 )
             );
             const totalShares = balances.reduce((a, b) => a + b, 0);
-            if (totalShares < 0.001) continue; // nothing on-chain to redeem
+            if (totalShares < 0.001) {
+                skippedNoBalance++;
+                continue;
+            }
 
             // Estimate payout from numerators (for logging)
             const payoutFractions = await Promise.all(
@@ -616,12 +630,13 @@ export async function redeemSniperPositions() {
             const label = conditionId.slice(0, 12) + '...';
             const isWin = expectedUsdc >= 0.01;
 
-            // SNIPER: only redeem WINNERS — skip losses (manual cleanup)
+            // SNIPER: only redeem WINNERS — cache losses to skip next time
             if (!isWin) {
+                _skippedLosses.add(conditionId);
                 if (config.dryRun) {
-                    logger.info(`SNIPER[SIM] skip loss: ${label} — ${totalShares.toFixed(3)} shares (manual cleanup only)`);
+                    logger.info(`SNIPER[SIM] skip loss: ${label} — ${totalShares.toFixed(3)} shares (cached, no future checks)`);
                 } else {
-                    logger.info(`SNIPER redeemer: skip loss ${label} — not redeeming (manual cleanup)`);
+                    logger.info(`SNIPER redeemer: skip loss ${label} — cached for future cycles`);
                 }
                 continue;
             }
@@ -653,7 +668,9 @@ export async function redeemSniperPositions() {
         }
     }
 
-    if (redeemed > 0) {
-        logger.success(`SNIPER redeemer: processed ${redeemed} position(s)`);
+    // Summary log
+    const totalSkipped = skippedUnresolved + skippedLosses + skippedNoBalance + _skippedLosses.size + _failedConditions.size;
+    if (redeemed > 0 || totalSkipped > 0) {
+        logger.info(`SNIPER redeemer: ${redeemed} redeemed, ${_skippedLosses.size} losses cached, ${skippedUnresolved} unresolved skipped`);
     }
 }
